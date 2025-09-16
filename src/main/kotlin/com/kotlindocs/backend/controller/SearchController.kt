@@ -7,16 +7,21 @@ import ai.grazie.model.llm.parameters.LLMConfig
 import ai.grazie.model.llm.profile.OpenAIProfileIDs
 import ai.grazie.model.llm.prompt.LLMPromptID
 import kotlinx.coroutines.runBlocking
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.PostMapping
-import org.springframework.web.bind.annotation.RequestBody
-import org.springframework.web.bind.annotation.RequestParam
-import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.bind.annotation.*
+import org.springframework.http.HttpStatus
 
 @RestController
 class SearchController(
     private val apiClient: SuspendableAPIGatewayClient
 ) {
+    class BadRequestException(message: String) : RuntimeException(message)
+
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    @ExceptionHandler(BadRequestException::class)
+    fun handleBadRequest(e: BadRequestException): Map<String, String> {
+        return mapOf("error" to e.message!!)
+    }
+
     companion object Companion {
         val DOMAINS = listOf<String>(
             "https://kotlinlang.org/docs"
@@ -71,8 +76,7 @@ class SearchController(
 //        val temperature: Double? = null,
     )
 
-    @PostMapping("/chat")
-    fun chat(@RequestBody(required = false) body: ChatRequest?): String {
+    private fun processChatRequest(body: ChatRequest?): String {
         val builder = StringBuilder()
 
         val systemText = body?.systemPrompt?.takeIf { it.isNotBlank() } ?: "You are a helpful assistant"
@@ -109,5 +113,30 @@ class SearchController(
             }
         }
         return builder.toString()
+    }
+
+    @PostMapping("/chat")
+    fun chat(@RequestBody(required = false) body: ChatRequest?): String = processChatRequest(body)
+
+    @PostMapping("/summarize")
+    fun summary(@RequestBody(required = false) pageContent: String?): String {
+        if (pageContent.isNullOrBlank()) {
+            throw BadRequestException("Page content cannot be empty or null")
+        }
+
+        val summaryRequest = ChatRequest(
+            // @language=markdown
+            systemPrompt = """
+                You are a helpful assistant that provides concise summaries.
+                Keep your responses brief and to the point.
+                For the page content, provide the following markdown:
+                ```markdown
+                $pageContent
+                ```
+            """.trimIndent(),
+            userPrompt = "Provide a summary of the page."
+        )
+
+        return processChatRequest(summaryRequest)
     }
 }
