@@ -8,6 +8,8 @@ import ai.grazie.model.llm.profile.OpenAIProfileIDs
 import ai.grazie.model.llm.prompt.LLMPromptID
 import kotlinx.coroutines.runBlocking
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
@@ -63,21 +65,25 @@ class SearchController(
         return builder.toString()
     }
 
-    @GetMapping("/chat")
-    fun chat(
-        @RequestParam("systemPrompt", required = false) systemPrompt: String?,
-        @RequestParam("userPrompt", required = false) userPrompt: String?,
-//        @RequestParam("temperature", required = false) temperatureParam: Double?
-    ): String {
+    data class ChatRequest(
+        val systemPrompt: String? = null,
+        val userPrompt: String? = null,
+//        val temperature: Double? = null,
+    )
+
+    @PostMapping("/chat")
+    fun chat(@RequestBody(required = false) body: ChatRequest?): String {
         val builder = StringBuilder()
 
-        val systemText = systemPrompt?.takeIf { it.isNotBlank() } ?: "You are a helpful assistant"
-        val userText = userPrompt?.takeIf { it.isNotBlank() } ?: "Say hello in one short sentence."
-//        val temperature = when {
-//            temperatureParam == null -> 0.6
-//            temperatureParam < 0.0 -> 0.0
-//            temperatureParam > 2.0 -> 2.0
-//            else -> temperatureParam
+        val systemText = body?.systemPrompt?.takeIf { it.isNotBlank() } ?: "You are a helpful assistant"
+        val userText = body?.userPrompt?.takeIf { it.isNotBlank() } ?: "Say hello in one short sentence."
+//        val temperature = when (val t = body?.temperature) {
+//            null -> 0.6
+//            else -> when {
+//                t < 0.0 -> 0.0
+//                t > 2.0 -> 2.0
+//                else -> t
+//            }
 //        }
 
         runBlocking {
