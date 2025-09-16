@@ -7,11 +7,13 @@ import ai.grazie.model.llm.parameters.LLMConfig
 import ai.grazie.model.llm.profile.OpenAIProfileIDs
 import ai.grazie.model.llm.prompt.LLMPromptID
 import kotlinx.coroutines.runBlocking
-import org.springframework.web.bind.annotation.GetMapping
-import org.springframework.web.bind.annotation.PostMapping
-import org.springframework.web.bind.annotation.RequestBody
-import org.springframework.web.bind.annotation.RequestParam
-import org.springframework.web.bind.annotation.RestController
+import org.apache.coyote.BadRequestException
+import org.springframework.web.bind.annotation.*
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.time.Duration
 
 @RestController
 class SearchController(
@@ -71,8 +73,7 @@ class SearchController(
 //        val temperature: Double? = null,
     )
 
-    @PostMapping("/chat")
-    fun chat(@RequestBody(required = false) body: ChatRequest?): String {
+    private fun processChatRequest(body: ChatRequest?): String {
         val builder = StringBuilder()
 
         val systemText = body?.systemPrompt?.takeIf { it.isNotBlank() } ?: "You are a helpful assistant"
@@ -110,4 +111,68 @@ class SearchController(
         }
         return builder.toString()
     }
+
+    @PostMapping("/chat")
+    fun chat(@RequestBody(required = false) body: ChatRequest?): String = processChatRequest(body)
+
+    data class SummarizeRequest(
+        val systemPrompt: String? = null,
+        val url: String? = null,
+    )
+
+    @PostMapping("/summarize")
+    fun summary(@RequestBody(required = false) request: SummarizeRequest?): String {
+        val docsUrl = request?.url?.takeIf { it.isNotBlank() }?.let {
+            val a = URI.create(it)
+            if (a.scheme == "https" && a.path?.startsWith("/docs/") == true && a.host == "kotlinlang.org")
+                a
+            else
+                null
+        } ?: throw BadRequestException("URL must be a valid Kotlin docs page")
+
+        val content = runBlocking {
+            getDocsPageContent(docsUrl)
+        }
+
+        val summaryRequest = ChatRequest(
+            // @language=markdown
+            systemPrompt = request.systemPrompt?.replace("\$content", content) ?: """
+                You are a helpful assistant that provides concise summaries.
+                - Keep your responses brief and to the point.
+                - Dont use any comments or extra text, only the summary.
+                - Add common points
+                
+                For the page content, provide the following markdown:
+                ```markdown
+                $content
+                ```
+            """.trimIndent(),
+            userPrompt = "Provide a summary of the page."
+        )
+
+        return processChatRequest(summaryRequest);
+    }
+}
+
+private fun getDocsPageContent(docsUrl: URI): String = try {
+    val client = HttpClient.newBuilder()
+        .version(HttpClient.Version.HTTP_2)
+        .followRedirects(HttpClient.Redirect.NORMAL)
+        .connectTimeout(Duration.ofSeconds(10))
+        .build()
+
+    val request = HttpRequest.newBuilder()
+        .uri(docsUrl)
+        .timeout(Duration.ofSeconds(10))
+        .GET()
+        .build()
+
+    val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+    if (response.statusCode() == 200) {
+        response.body() ?: throw BadRequestException("Failed to fetch page content: empty body")
+    } else {
+        throw BadRequestException("Failed to fetch page content: ${response.statusCode()}")
+    }
+} catch (e: Exception) {
+    throw BadRequestException("Failed to fetch page content: ${e.message}")
 }
