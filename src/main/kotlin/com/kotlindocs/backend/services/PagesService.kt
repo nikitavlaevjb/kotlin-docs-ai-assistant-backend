@@ -1,6 +1,7 @@
 package com.kotlindocs.backend.services
 
 import jakarta.annotation.PreDestroy
+import org.slf4j.LoggerFactory
 import org.springframework.boot.ApplicationArguments
 import org.springframework.boot.ApplicationRunner
 import org.springframework.core.io.ResourceLoader
@@ -15,6 +16,7 @@ import java.util.zip.ZipInputStream
 class PagesService(
     private val resourceLoader: ResourceLoader
 ) : ApplicationRunner {
+    private val logger = LoggerFactory.getLogger(PagesService::class.java)
 
     // Keep the temp dir reference so we can delete it on shutdown
     private var tempDir: Path? = null
@@ -32,13 +34,13 @@ class PagesService(
         val resource = resourceLoader.getResource("classpath:pages.zip")
         if (!resource.exists()) {
             // handle missing resource as appropriate
-            println("ZIP resource not found" + resource.file.path)
+            logger.error("ZIP resource not found {}", resource.file.path)
             return
         }
 
         // Create a temp directory to unpack into
         tempDir = Files.createTempDirectory("pages-unpack-")
-        println("Unpacking ${resource.filename} to $tempDir")
+        logger.info("Unpacking {} to {}", resource.filename, tempDir)
 
         // Unpack using ZipInputStream
         resource.inputStream.use { fis ->
@@ -76,7 +78,7 @@ class PagesService(
             }
         }
 
-        println("Unpack complete")
+        logger.info("Unpack complete")
     }
 
     @PreDestroy
