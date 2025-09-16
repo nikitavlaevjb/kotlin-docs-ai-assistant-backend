@@ -7,21 +7,16 @@ import ai.grazie.model.llm.parameters.LLMConfig
 import ai.grazie.model.llm.profile.OpenAIProfileIDs
 import ai.grazie.model.llm.prompt.LLMPromptID
 import kotlinx.coroutines.runBlocking
-import org.springframework.web.bind.annotation.*
-import org.springframework.http.HttpStatus
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.RestController
 
 @RestController
 class SearchController(
     private val apiClient: SuspendableAPIGatewayClient
 ) {
-    class BadRequestException(message: String) : RuntimeException(message)
-
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    @ExceptionHandler(BadRequestException::class)
-    fun handleBadRequest(e: BadRequestException): Map<String, String> {
-        return mapOf("error" to e.message!!)
-    }
-
     companion object Companion {
         val DOMAINS = listOf<String>(
             "https://kotlinlang.org/docs"
@@ -119,8 +114,8 @@ class SearchController(
     fun chat(@RequestBody(required = false) body: ChatRequest?): String = processChatRequest(body)
 
     @PostMapping("/summarize")
-    fun summary(@RequestBody(required = false) pageContent: String?): String {
-        if (pageContent.isNullOrBlank()) {
+    fun summary(@RequestBody(required = false) content: String?): String {
+        if (content.isNullOrBlank()) {
             throw BadRequestException("Page content cannot be empty or null")
         }
 
@@ -128,15 +123,18 @@ class SearchController(
             // @language=markdown
             systemPrompt = """
                 You are a helpful assistant that provides concise summaries.
-                Keep your responses brief and to the point.
+                - Keep your responses brief and to the point.
+                - Dont use any comments or extra text, only the summary.
+                - Add common points
+                
                 For the page content, provide the following markdown:
                 ```markdown
-                $pageContent
+                $content
                 ```
             """.trimIndent(),
             userPrompt = "Provide a summary of the page."
         )
 
-        return processChatRequest(summaryRequest)
+        return processChatRequest(summaryRequest);
     }
 }
