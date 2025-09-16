@@ -1,23 +1,24 @@
 package com.kotlindocs.backend.controller
 
 import ai.grazie.api.gateway.client.SuspendableAPIGatewayClient
+import ai.grazie.gen.tasks.text.summarize.TextSummarizeTaskDescriptor
+import ai.grazie.gen.tasks.text.summarize.TextSummarizeTaskParams
 import ai.grazie.gen.tasks.text.webSearch.WebSearchTaskDescriptor
 import ai.grazie.gen.tasks.text.webSearch.WebSearchTaskParams
 import ai.grazie.model.llm.parameters.LLMConfig
 import ai.grazie.model.llm.profile.OpenAIProfileIDs
 import ai.grazie.model.llm.prompt.LLMPromptID
+import com.kotlindocs.backend.services.PagesService
 import kotlinx.coroutines.runBlocking
 import org.apache.coyote.BadRequestException
 import org.springframework.web.bind.annotation.*
 import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
 
 @RestController
 class SearchController(
-    private val apiClient: SuspendableAPIGatewayClient
+    private val apiClient: SuspendableAPIGatewayClient,
+    private val pagesService: PagesService
+
 ) {
     companion object Companion {
         val DOMAINS = listOf<String>(
@@ -115,64 +116,78 @@ class SearchController(
     @PostMapping("/chat")
     fun chat(@RequestBody(required = false) body: ChatRequest?): String = processChatRequest(body)
 
+    data class SummarizeByWordsRequest(
+        val url: String,
+        val size: String = "20%",
+
+        )
+
+    @PostMapping("/summarizeByWords")
+    fun summary(@RequestBody(required = false) request: SummarizeByWordsRequest): String {
+        val builder = StringBuilder()
+
+        runBlocking {
+            val content = getDocsPageContent(request.url)
+
+            val size = when {
+                request.size.endsWith("%") -> request.size.removeSuffix("%").toIntOrNull()?.let { percent ->
+                    calculateTextSize(content) * percent / 100
+                }
+
+                else -> request.size.toIntOrNull()
+            } ?: throw BadRequestException("Size must be a percentage (e.g. 20%) or integer")
+
+            apiClient.tasksWithStreamData().execute(
+                TextSummarizeTaskDescriptor.createCallData(
+                    TextSummarizeTaskParams(
+                        text = content, words = size, lang = "English"
+                    )
+                )
+            ).collect {
+                val content = it.content
+                if (content.isNotEmpty()) builder.append(content)
+            }
+        }
+
+        return builder.toString()
+    }
+
     data class SummarizeRequest(
         val systemPrompt: String? = null,
         val url: String? = null,
     )
 
     @PostMapping("/summarize")
-    fun summary(@RequestBody(required = false) request: SummarizeRequest?): String {
-        val docsUrl = request?.url?.takeIf { it.isNotBlank() }?.let {
-            val a = URI.create(it)
-            if (a.scheme == "https" && a.path?.startsWith("/docs/") == true && a.host == "kotlinlang.org")
-                a
-            else
-                null
-        } ?: throw BadRequestException("URL must be a valid Kotlin docs page")
-
+    fun summary(@RequestBody(required = false) request: SummarizeRequest): String {
         val content = runBlocking {
-            getDocsPageContent(docsUrl)
+            getDocsPageContent(request.url)
         }
 
         val summaryRequest = ChatRequest(
             // @language=markdown
-            systemPrompt = request.systemPrompt?.replace("\$content", content) ?: """
-                You are a helpful assistant that provides concise summaries.
-                - Keep your responses brief and to the point.
-                - Dont use any comments or extra text, only the summary.
-                - Add common points
+            systemPrompt = request.systemPrompt?.replace("\$content", content) ?: ("""
                 
-                For the page content, provide the following markdown:
-                ```markdown
-                $content
-                ```
-            """.trimIndent(),
+            """.trimIndent() + "\n\n```markdown\n$content\n```"),
             userPrompt = "Provide a summary of the page."
         )
 
         return processChatRequest(summaryRequest);
     }
-}
 
-private fun getDocsPageContent(docsUrl: URI): String = try {
-    val client = HttpClient.newBuilder()
-        .version(HttpClient.Version.HTTP_2)
-        .followRedirects(HttpClient.Redirect.NORMAL)
-        .connectTimeout(Duration.ofSeconds(10))
-        .build()
+    private fun getDocsPageContent(url: String?): String = try {
+        val docsUrl = url?.takeIf { it.isNotBlank() }?.let { URI.create(it)?.path }
+            ?: throw BadRequestException("URL must be a valid Kotlin docs page")
 
-    val request = HttpRequest.newBuilder()
-        .uri(docsUrl)
-        .timeout(Duration.ofSeconds(10))
-        .GET()
-        .build()
+        val localPath = "${docsUrl.removeSuffix(".html").removePrefix("/")}.md"
 
-    val response = client.send(request, HttpResponse.BodyHandlers.ofString())
-    if (response.statusCode() == 200) {
-        response.body() ?: throw BadRequestException("Failed to fetch page content: empty body")
-    } else {
-        throw BadRequestException("Failed to fetch page content: ${response.statusCode()}")
+        pagesService.readTextFile(localPath) ?: throw Exception("Failed to fetch page content.")
+    } catch (_: Exception) {
+        throw BadRequestException("Failed to fetch page content.")
     }
-} catch (e: Exception) {
-    throw BadRequestException("Failed to fetch page content: ${e.message}")
+
 }
+
+private fun calculateTextSize(text: String): Int = text
+    .split(Regex("(?U)\\s+"))
+    .filter { it.isNotBlank() && it.contains(Regex("\\p{L}")) }
+    .size
