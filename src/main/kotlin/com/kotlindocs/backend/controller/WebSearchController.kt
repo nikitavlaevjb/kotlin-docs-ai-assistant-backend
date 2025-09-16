@@ -9,7 +9,7 @@ class WebSearchController {
     @GetMapping("/websearch")
     fun websearch(): Map<String, Any> {
         return mapOf(
-            "message" to "WebSearch endpoint is working!",
+            "message" to "WebSearch endpoint is working!!!",
             "timestamp" to System.currentTimeMillis()
         )
     }
