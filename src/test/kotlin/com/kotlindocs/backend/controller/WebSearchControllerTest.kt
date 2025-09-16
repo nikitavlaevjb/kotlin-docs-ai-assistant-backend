@@ -7,7 +7,7 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
 
-@WebMvcTest(WebSearchController::class)
+@WebMvcTest(SearchController::class)
 class WebSearchControllerTest {
 
     @Autowired

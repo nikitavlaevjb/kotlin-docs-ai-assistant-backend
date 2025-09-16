@@ -3,16 +3,19 @@ package com.kotlindocs.backend.controller
 import ai.grazie.api.gateway.client.SuspendableAPIGatewayClient
 import ai.grazie.gen.tasks.text.webSearch.WebSearchTaskDescriptor
 import ai.grazie.gen.tasks.text.webSearch.WebSearchTaskParams
+import ai.grazie.model.llm.parameters.LLMConfig
+import ai.grazie.model.llm.profile.OpenAIProfileIDs
+import ai.grazie.model.llm.prompt.LLMPromptID
 import kotlinx.coroutines.runBlocking
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 @RestController
-class WebSearchController(
+class SearchController(
     private val apiClient: SuspendableAPIGatewayClient
 ) {
-    companion object {
+    companion object Companion {
         val DOMAINS = listOf<String>(
             "https://kotlinlang.org/docs"
         )
@@ -44,7 +47,7 @@ class WebSearchController(
             val taskCall = WebSearchTaskDescriptor.createCallData(taskParams)
             try {
                 val stream = apiClient.tasksWithStreamData().execute(taskCall)
-                stream?.collect { event ->
+                stream.collect { event ->
                     val content = event.content
                     if (content.isNotEmpty()) {
                         builder.append(content)
@@ -57,6 +60,48 @@ class WebSearchController(
         }
 
         // Return the raw JSON string (or empty string if nothing was received)
+        return builder.toString()
+    }
+
+    @GetMapping("/chat")
+    fun chat(
+        @RequestParam("systemPrompt", required = false) systemPrompt: String?,
+        @RequestParam("userPrompt", required = false) userPrompt: String?,
+//        @RequestParam("temperature", required = false) temperatureParam: Double?
+    ): String {
+        val builder = StringBuilder()
+
+        val systemText = systemPrompt?.takeIf { it.isNotBlank() } ?: "You are a helpful assistant"
+        val userText = userPrompt?.takeIf { it.isNotBlank() } ?: "Say hello in one short sentence."
+//        val temperature = when {
+//            temperatureParam == null -> 0.6
+//            temperatureParam < 0.0 -> 0.0
+//            temperatureParam > 2.0 -> 2.0
+//            else -> temperatureParam
+//        }
+
+        runBlocking {
+            try {
+                val chatResponseStream = apiClient.llm().v9().chat(
+                    prompt = LLMPromptID("kotlin-docs-ai"),
+                    profile = OpenAIProfileIDs.Chat.GPT5_Mini,
+                    messages = {
+                        system(systemText)
+                        user(userText)
+                    },
+                    parameters = LLMConfig(
+//                        temperature = temperature
+                    )
+                )
+                chatResponseStream.collect {
+                    val content = it.content
+                    if (content.isNotEmpty()) builder.append(content)
+                }
+            } catch (t: Throwable) {
+                println("Error: ${t.message}")
+                // Don't rethrow during tests/no client; return whatever collected
+            }
+        }
         return builder.toString()
     }
 }
