@@ -1,8 +1,6 @@
 package com.kotlindocs.backend.controller
 
 import ai.grazie.api.gateway.client.SuspendableAPIGatewayClient
-import ai.grazie.gen.tasks.text.summarize.TextSummarizeTaskDescriptor
-import ai.grazie.gen.tasks.text.summarize.TextSummarizeTaskParams
 import ai.grazie.gen.tasks.text.webSearch.WebSearchTaskDescriptor
 import ai.grazie.gen.tasks.text.webSearch.WebSearchTaskParams
 import ai.grazie.model.llm.data.stream.LLMStreamData
@@ -12,6 +10,7 @@ import ai.grazie.model.llm.prompt.LLMPromptID
 import com.kotlindocs.backend.services.PagesService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.apache.coyote.BadRequestException
@@ -31,6 +30,16 @@ class SearchController(
             "https://kotlinlang.org/docs"
         )
     }
+
+    private suspend fun createChatStream(request: ChatRequest): Flow<LLMStreamData> = apiClient.llm().v9().chat(
+        prompt = LLMPromptID("kotlin-docs-ai"),
+        profile = OpenAIProfileIDs.Chat.GPT5_Mini,
+        messages = {
+            system(request.systemPrompt)
+            user(request.userPrompt)
+        },
+        parameters = LLMConfig()
+    )
 
     @GetMapping("/websearch")
     fun websearch(
@@ -74,47 +83,68 @@ class SearchController(
         return builder.toString()
     }
 
-    data class ChatRequest(
+    data class ChatHTTPRequest(
         val systemPrompt: String? = null,
         val userPrompt: String? = null,
-//        val temperature: Double? = null,
     )
 
-    private suspend fun processChatRequest(body: ChatRequest?): String {
+    data class ChatRequest(
+        val systemPrompt: String,
+        val userPrompt: String,
+    ) {
+        init {
+            require(systemPrompt.isNotBlank()) { "systemPrompt must not be blank" }
+            require(userPrompt.isNotBlank()) { "userPrompt must not be blank" }
+        }
+    }
+
+    private suspend fun collectChatStream(request: suspend () -> ChatRequest): String {
         val builder = StringBuilder()
 
-        val systemText = body?.systemPrompt?.takeIf { it.isNotBlank() } ?: "You are a helpful assistant"
-        val userText = body?.userPrompt?.takeIf { it.isNotBlank() } ?: "Say hello in one short sentence."
-//        val temperature = when (val t = body?.temperature) {
-//            null -> 0.6
-//            else -> when {
-//                t < 0.0 -> 0.0
-//                t > 2.0 -> 2.0
-//                else -> t
-//            }
-//        }
-
         try {
-            val chatResponseStream = apiClient.llm().v9().chat(
-                prompt = LLMPromptID("kotlin-docs-ai"),
-                profile = OpenAIProfileIDs.Chat.GPT5_Mini,
-                messages = {
-                    system(systemText)
-                    user(userText)
-                },
-                parameters = LLMConfig(
-//                        temperature = temperature
-                )
-            )
-            chatResponseStream.collect {
+            createChatStream(request()).collect {
                 val content = it.content
                 if (content.isNotEmpty()) builder.append(content)
             }
         } catch (t: Throwable) {
             println("Error: ${t.message}")
-            // Don't rethrow during tests/no client; return whatever collected
         }
+
         return builder.toString()
+    }
+
+    private fun processChatSSE(request: suspend () -> ChatRequest): SseEmitter {
+        val emitter = SseEmitter(0L)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                createChatStream(request()).collect { event: LLMStreamData ->
+                    try {
+                        val content = event.content.ifEmpty { return@collect }
+                        val escapedContent = "\\\"$content\\\""
+                        val sseEvent = SseEmitter.event().name("message").data(escapedContent)
+                        emitter.send(sseEvent)
+                    } catch (sendEx: Exception) {
+                        emitter.completeWithError(sendEx)
+                    }
+                }
+
+                try {
+                    emitter.send(SseEmitter.event().name("end").data("[DONE]"))
+                } catch (_: Exception) {
+                }
+
+                emitter.complete()
+            } catch (t: Throwable) {
+                try {
+                    emitter.send(SseEmitter.event().name("error").data(t.message ?: "Unknown error"))
+                } catch (_: Exception) {
+                }
+                emitter.completeWithError(t)
+            }
+        }
+
+        return emitter
     }
 
     private suspend fun getDocsPageContent(url: String?): String = try {
@@ -129,93 +159,21 @@ class SearchController(
     }
 
     @PostMapping("/chat")
-    fun chat(@RequestBody(required = false) body: ChatRequest?): String = runBlocking {
-        processChatRequest(body)
+    fun chat(@RequestBody(required = false) body: ChatHTTPRequest?): String = runBlocking {
+        collectChatStream {
+            ChatRequest(
+                systemPrompt = body?.systemPrompt ?: "",
+                userPrompt = body?.userPrompt ?: throw BadRequestException("Request body must contain userPrompt")
+            )
+        }
     }
 
     @PostMapping("/chat/stream/sse", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
-    fun chatStreamSse(@RequestBody(required = true) body: ChatRequest): SseEmitter {
-        val emitter = SseEmitter(0L)
-        val systemText = body.systemPrompt?.takeIf { it.isNotBlank() } ?: "You are a helpful assistant"
-        val userText = body.userPrompt?.takeIf { it.isNotBlank() } ?: "Say hello in one short sentence."
-
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val chatResponseStream = apiClient.llm().v9().chat(
-                    prompt = LLMPromptID("kotlin-docs-ai"),
-                    profile = OpenAIProfileIDs.Chat.GPT5_Mini,
-                    messages = {
-                        system(systemText)
-                        user(userText)
-                    },
-                    parameters = LLMConfig(
-                    )
-                )
-
-                chatResponseStream.collect { event: LLMStreamData ->
-                    val content = event.content
-                    if (content.isNotEmpty()) {
-                        val escapedContent = "\\\"$content\\\""
-                        try {
-                            emitter.send(SseEmitter.event().name("message").data(escapedContent))
-                        } catch (sendEx: Exception) {
-                            // Client might have disconnected
-                            emitter.completeWithError(sendEx)
-                            return@collect
-                        }
-                    }
-                }
-                // Signal completion
-                try {
-                    emitter.send(SseEmitter.event().name("end").data("[DONE]"))
-                } catch (_: Exception) {
-                }
-                emitter.complete()
-            } catch (t: Throwable) {
-                try {
-                    emitter.send(SseEmitter.event().name("error").data(t.message ?: "Unknown error"))
-                } catch (_: Exception) {
-                }
-                emitter.completeWithError(t)
-            }
-        }
-
-        return emitter
-    }
-
-    data class SummarizeByWordsRequest(
-        val url: String,
-        val size: String = "20%",
-    )
-
-    @PostMapping("/summarizeByWords")
-    fun summary(@RequestBody(required = false) request: SummarizeByWordsRequest): String {
-        val builder = StringBuilder()
-
-        runBlocking {
-            val content = getDocsPageContent(request.url)
-
-            val size = when {
-                request.size.endsWith("%") -> request.size.removeSuffix("%").toIntOrNull()?.let { percent ->
-                    calculateTextSize(content) * percent / 100
-                }
-
-                else -> request.size.toIntOrNull()
-            } ?: throw BadRequestException("Size must be a percentage (e.g. 20%) or integer")
-
-            apiClient.tasksWithStreamData().execute(
-                TextSummarizeTaskDescriptor.createCallData(
-                    TextSummarizeTaskParams(
-                        text = content, words = size, lang = "English"
-                    )
-                )
-            ).collect {
-                val content = it.content
-                if (content.isNotEmpty()) builder.append(content)
-            }
-        }
-
-        return builder.toString()
+    fun chatStreamSse(@RequestBody(required = true) body: ChatHTTPRequest?): SseEmitter = processChatSSE {
+        ChatRequest(
+            systemPrompt = body?.systemPrompt ?: "",
+            userPrompt = body?.userPrompt ?: throw BadRequestException("Request body must contain userPrompt")
+        )
     }
 
     data class SummarizeRequest(
@@ -223,11 +181,10 @@ class SearchController(
         val systemPrompt: String? = null,
     )
 
-    @PostMapping("/summarize")
-    fun summary(@RequestBody(required = false) request: SummarizeRequest): String = runBlocking {
+    private suspend fun makeSummarizeRequest(request: SummarizeRequest): ChatRequest {
         val content = getDocsPageContent(request.url)
 
-        val chatRequest = ChatRequest(
+        return ChatRequest(
             // language=markdown
             systemPrompt = request.systemPrompt?.replace("\$content", content) ?: ("""
                 You need to summarize the documentation article.
@@ -242,23 +199,29 @@ class SearchController(
             """.trimIndent() + "\n\n```markdown\n$content\n```"),
             userPrompt = "Provide a summary of the page."
         )
-
-        processChatRequest(chatRequest)
     }
+
+    @PostMapping("/summarize")
+    fun summary(@RequestBody(required = false) request: SummarizeRequest): String = runBlocking {
+        collectChatStream { makeSummarizeRequest(request) }
+    }
+
+    @PostMapping("/summarize/stream/sse", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
+    fun summarizeStreamSSE(@RequestBody(required = true) request: SummarizeRequest): SseEmitter =
+        processChatSSE { makeSummarizeRequest(request) }
 
     data class UserMessageRequest(
         val url: String? = null,
         val message: String? = null,
     )
 
-    @PostMapping("/realWorldExample")
-    fun realWorldExample(@RequestBody(required = false) request: UserMessageRequest): String = runBlocking {
-        val content = getDocsPageContent(request.url)
-
+    private suspend fun makeRealWorldExample(request: UserMessageRequest): ChatRequest {
         val message =
             request.message?.takeIf { it.isNotBlank() } ?: throw BadRequestException("Message must not be blank.")
 
-        val chatRequest = ChatRequest(
+        val content = getDocsPageContent(request.url)
+
+        return ChatRequest(
             // language=markdown
             systemPrompt = """
                 You are a Kotlin expert and tutor.
@@ -276,18 +239,24 @@ class SearchController(
             """.trimIndent() + "\n\n```markdown\n$content\n```",
             userPrompt = message,
         )
-
-        processChatRequest(chatRequest)
     }
 
-    @PostMapping("/explainInSimpleWords")
-    fun explainInSimpleWords(@RequestBody(required = false) request: UserMessageRequest): String = runBlocking {
-        val content = getDocsPageContent(request.url)
+    @PostMapping("/realWorldExample")
+    fun realWorldExample(@RequestBody(required = false) request: UserMessageRequest): String = runBlocking {
+        collectChatStream { makeRealWorldExample(request) }
+    }
 
+    @PostMapping("/realWorldExample/stream/sse", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
+    fun realWorldExampleSSE(@RequestBody(required = true) request: UserMessageRequest): SseEmitter =
+        processChatSSE { makeRealWorldExample(request) }
+
+    private suspend fun makeExplainInSimpleWords(request: UserMessageRequest): ChatRequest {
         val message =
             request.message?.takeIf { it.isNotBlank() } ?: throw BadRequestException("Message must not be blank.")
 
-        val chatRequest = ChatRequest(
+        val content = getDocsPageContent(request.url)
+
+        return ChatRequest(
             // language=markdown
             systemPrompt = """
                 You are a Kotlin expert and tutor.
@@ -305,12 +274,14 @@ class SearchController(
             """.trimIndent() + "\n\n```markdown\n$content\n```",
             userPrompt = message,
         )
-
-        processChatRequest(chatRequest)
     }
-}
 
-private fun calculateTextSize(text: String): Int = text
-    .split(Regex("(?U)\\s+"))
-    .filter { it.isNotBlank() && it.contains(Regex("\\p{L}")) }
-    .size
+    @PostMapping("/explainInSimpleWords")
+    fun explainInSimpleWords(@RequestBody(required = false) request: UserMessageRequest): String = runBlocking {
+        collectChatStream { makeExplainInSimpleWords(request) }
+    }
+
+    @PostMapping("/explainInSimpleWords/stream/sse")
+    fun explainInSimpleWordsSSE(@RequestBody(required = false) request: UserMessageRequest): SseEmitter =
+        processChatSSE { makeExplainInSimpleWords(request) }
+}
