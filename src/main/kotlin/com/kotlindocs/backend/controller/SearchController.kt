@@ -155,8 +155,9 @@ class SearchController(
                 chatResponseStream.collect { event: LLMStreamData ->
                     val content = event.content
                     if (content.isNotEmpty()) {
+                        val escapedContent = "\\\"$content\\\""
                         try {
-                            emitter.send(SseEmitter.event().name("message").data(content))
+                            emitter.send(SseEmitter.event().name("message").data(escapedContent))
                         } catch (sendEx: Exception) {
                             // Client might have disconnected
                             emitter.completeWithError(sendEx)
