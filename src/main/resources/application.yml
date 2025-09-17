@@ -1,4 +1,6 @@
 spring:
+  cache:
+    type: simple
   application:
     name: kotlin-docs-ai-assistant-backend
 
