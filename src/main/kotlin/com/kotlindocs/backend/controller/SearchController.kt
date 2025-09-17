@@ -163,16 +163,16 @@ class SearchController(
     }
 
     data class SummarizeRequest(
-        val systemPrompt: String? = null,
         val url: String? = null,
+        val systemPrompt: String? = null,
     )
 
     @PostMapping("/summarize")
     fun summary(@RequestBody(required = false) request: SummarizeRequest): String = runBlocking {
         val content = getDocsPageContent(request.url)
 
-        val summaryRequest = ChatRequest(
-            // @language=markdown
+        val chatRequest = ChatRequest(
+            // language=markdown
             systemPrompt = request.systemPrompt?.replace("\$content", content) ?: ("""
                 You need to summarize the documentation article.
                 I will send a link to it. There are some rules you need to follow:
@@ -186,7 +186,54 @@ class SearchController(
             userPrompt = "Provide a summary of the page."
         )
 
-        processChatRequest(summaryRequest)
+        processChatRequest(chatRequest)
+    }
+
+    data class UserMessageRequest(
+        val url: String? = null,
+        val message: String? = null,
+    )
+
+    @PostMapping("/realWorldExample")
+    fun realWorldExample(@RequestBody(required = false) request: UserMessageRequest): String = runBlocking {
+        val content = getDocsPageContent(request.url)
+
+        val message =
+            request.message?.takeIf { it.isNotBlank() } ?: throw BadRequestException("Message must not be blank.")
+
+        val chatRequest = ChatRequest(
+            // language=markdown
+            systemPrompt = """
+                You are a Kotlin expert. Provide a practical, real-world code example (with context) for the user's topic.
+                Include a brief explanation and runnable snippet when possible.
+                
+                Original page content:
+            """.trimIndent() + "\n\n```markdown\n$content\n```",
+            userPrompt = message,
+        )
+
+        processChatRequest(chatRequest)
+    }
+
+    @PostMapping("/explainInSimpleWords")
+    fun explainInSimpleWords(@RequestBody(required = false) request: UserMessageRequest): String = runBlocking {
+        val content = getDocsPageContent(request.url)
+
+        val message =
+            request.message?.takeIf { it.isNotBlank() } ?: throw BadRequestException("Message must not be blank.")
+
+        val chatRequest = ChatRequest(
+            // language=markdown
+            systemPrompt = """
+                You are a Kotlin tutor.
+                Explain the topic in simple terms, step by step, using clear analogies and short examples.
+                
+                Original page content:
+            """.trimIndent() + "\n\n```markdown\n$content\n```",
+            userPrompt = message,
+        )
+
+        processChatRequest(chatRequest)
     }
 }
 
