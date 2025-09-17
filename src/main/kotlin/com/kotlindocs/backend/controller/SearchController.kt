@@ -287,4 +287,48 @@ class SearchController(
     @PostMapping("/explainInSimpleWords/stream/sse")
     fun explainInSimpleWordsSSE(@RequestBody(required = false) request: UserMessageRequest): SseEmitter =
         processChatSSE { makeExplainInSimpleWords(request) }
+
+    data class BackgroundTransformRequest(
+        val url: String,
+        val language: String,
+        val background: String,
+    )
+
+    @PostMapping("/backgroundTransform")
+    fun backgroundTransform(@RequestBody(required = true) request: BackgroundTransformRequest): String = runBlocking {
+        collectChatStream {
+            ChatRequest(
+                systemPrompt = """
+                I will provide three paramteres:
+                * page URL: ${'$'}url
+                * programming language: ${'$'}language
+                * development background description (such as mobile developer, backend, desktop, etc.): ${'$'}background
+                
+                
+                Based on these parameters, explain me that ${'$'}url page if I was:
+                * a developer with ${'$'}language knowledge
+                * I mostly develop a ${'$'}background
+                
+                Article should follow the rules:
+                
+                * Do not add an intro about this page
+                * Use Simple English, apply Kotlin documentation styleguides to the text, keep the style of the original article
+                * The article should have the same structure
+                * In each section (or after explaining a concepts) add some practical notes for the ${'$'}background if there is any
+                * The Kotlin codeblocks should remain the same
+                * If there is a adjacent topic to the concept explaining (for example, the ${'$'}language has a common/standard library or related language concept), mentioned them so I will be acknowledged the difference in Kotlin and ${'$'}language
+                * Don’t hesitate to expand the each section with some important details and comparisons, but they should be concise
+                * At the end of the article, but before the Next step section, provide an additional section that emphasised the key aspects and differences I need to know that explained on the page. Keep it concise, it could be a table with comparison
+                * Do not change the Next step section at all
+                * Output should be in Markdown format
+                """,
+                userPrompt = """
+                    Here are parameters:
+                    1. ${request.url}
+                    2. ${request.language}
+                    3. ${request.background}
+                """.trimIndent()
+            )
+        }
+    }
 }
