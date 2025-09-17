@@ -5,13 +5,19 @@ import ai.grazie.gen.tasks.text.summarize.TextSummarizeTaskDescriptor
 import ai.grazie.gen.tasks.text.summarize.TextSummarizeTaskParams
 import ai.grazie.gen.tasks.text.webSearch.WebSearchTaskDescriptor
 import ai.grazie.gen.tasks.text.webSearch.WebSearchTaskParams
+import ai.grazie.model.llm.data.stream.LLMStreamData
 import ai.grazie.model.llm.parameters.LLMConfig
 import ai.grazie.model.llm.profile.OpenAIProfileIDs
 import ai.grazie.model.llm.prompt.LLMPromptID
 import com.kotlindocs.backend.services.PagesService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.apache.coyote.BadRequestException
+import org.springframework.http.MediaType
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import java.net.URI
 
 @RestController
@@ -125,6 +131,55 @@ class SearchController(
     @PostMapping("/chat")
     fun chat(@RequestBody(required = false) body: ChatRequest?): String = runBlocking {
         processChatRequest(body)
+    }
+
+    @PostMapping("/chat/stream/sse", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
+    fun chatStreamSse(@RequestBody(required = true) body: ChatRequest): SseEmitter {
+        val emitter = SseEmitter(0L)
+        val systemText = body.systemPrompt?.takeIf { it.isNotBlank() } ?: "You are a helpful assistant"
+        val userText = body.userPrompt?.takeIf { it.isNotBlank() } ?: "Say hello in one short sentence."
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val chatResponseStream = apiClient.llm().v9().chat(
+                    prompt = LLMPromptID("kotlin-docs-ai"),
+                    profile = OpenAIProfileIDs.Chat.GPT5_Mini,
+                    messages = {
+                        system(systemText)
+                        user(userText)
+                    },
+                    parameters = LLMConfig(
+                    )
+                )
+
+                chatResponseStream.collect { event: LLMStreamData ->
+                    val content = event.content
+                    if (content.isNotEmpty()) {
+                        try {
+                            emitter.send(SseEmitter.event().name("message").data(content))
+                        } catch (sendEx: Exception) {
+                            // Client might have disconnected
+                            emitter.completeWithError(sendEx)
+                            return@collect
+                        }
+                    }
+                }
+                // Signal completion
+                try {
+                    emitter.send(SseEmitter.event().name("end").data("[DONE]"))
+                } catch (_: Exception) {
+                }
+                emitter.complete()
+            } catch (t: Throwable) {
+                try {
+                    emitter.send(SseEmitter.event().name("error").data(t.message ?: "Unknown error"))
+                } catch (_: Exception) {
+                }
+                emitter.completeWithError(t)
+            }
+        }
+
+        return emitter
     }
 
     data class SummarizeByWordsRequest(
