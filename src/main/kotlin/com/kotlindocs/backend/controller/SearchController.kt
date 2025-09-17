@@ -260,10 +260,18 @@ class SearchController(
         val chatRequest = ChatRequest(
             // language=markdown
             systemPrompt = """
-                You are a Kotlin expert. Provide a practical, real-world code example (with context) for the user's topic.
-                Include a brief explanation and runnable snippet when possible.
+                You are a Kotlin expert and tutor.
+                You need to provide a real-life code example or several (a piece of it) for the piece of text from the official documentation that user selected. 
+                Follow the rules:
+                 * The answer shouldn't contain up to three codeblocks.
+                 * The answer should be concise.
+                 * Use official Kotin, JetBrains, or Google repositories for examples or repositories with a number of stars more than 1000.
+                 * If there is not enough information, find the sentence in the ${request.url} and try to provide an example. If there is not enough information, the answer should explain the lack of context. Kindly ask to extend the selection or make another choice.
+                 * For the text, use simplified English. Apply Kotlin documentation guidelines.
+                 * Examples should be small, concise, and straight to the point.
+                 * If you want to provide a link or anchor, do it in a pure Markdown markup.
                 
-                Original page content:
+                Selected page content:
             """.trimIndent() + "\n\n```markdown\n$content\n```",
             userPrompt = message,
         )
@@ -286,14 +294,13 @@ class SearchController(
                 Follow the rules:
                  * The text shouldn't contain more than two paragraphs.
                  * If there is not enough information, find the sentence in the ${request.url} and try to explain in simpler words.
-                 *  If a user selected an article or a word that is not a term, the answer should explain lack of context. Kindly ask to extend the selection or make an another selection.
+                 *  If a user selected an article or a word that is not a term, the answer should explain lack of context. Kindly ask to extend the selection or make another choice.
                  * Use simplified English. Apply Kotlin documentation guidelines.
                  * If it is possible to provide a small example, provide it. It should be concise and straight to the point.
                  * Use only simple terms, like the user has no strong knowledge of programming.
                  * Do not provide any links in the answer.
                 
                 Selected page content:
-
             """.trimIndent() + "\n\n```markdown\n$content\n```",
             userPrompt = message,
         )
