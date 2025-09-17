@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.apache.coyote.BadRequestException
+import org.springframework.cache.annotation.Cacheable
 import org.springframework.http.MediaType
 import org.springframework.web.bind.annotation.*
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
@@ -26,7 +27,7 @@ class SearchController(
 
 ) {
     companion object Companion {
-        val DOMAINS = listOf<String>(
+        val DOMAINS = listOf(
             "https://kotlinlang.org/docs"
         )
     }
@@ -202,11 +203,13 @@ class SearchController(
     }
 
     @PostMapping("/summarize")
+    @Cacheable("summarize")
     fun summary(@RequestBody(required = false) request: SummarizeRequest): String = runBlocking {
         collectChatStream { makeSummarizeRequest(request) }
     }
 
     @PostMapping("/summarize/stream/sse", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
+    @Cacheable("summarize-sse")
     fun summarizeStreamSSE(@RequestBody(required = true) request: SummarizeRequest): SseEmitter =
         processChatSSE { makeSummarizeRequest(request) }
 
