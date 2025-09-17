@@ -74,7 +74,7 @@ class SearchController(
 //        val temperature: Double? = null,
     )
 
-    private fun processChatRequest(body: ChatRequest?): String {
+    private suspend fun processChatRequest(body: ChatRequest?): String {
         val builder = StringBuilder()
 
         val systemText = body?.systemPrompt?.takeIf { it.isNotBlank() } ?: "You are a helpful assistant"
@@ -88,33 +88,44 @@ class SearchController(
 //            }
 //        }
 
-        runBlocking {
-            try {
-                val chatResponseStream = apiClient.llm().v9().chat(
-                    prompt = LLMPromptID("kotlin-docs-ai"),
-                    profile = OpenAIProfileIDs.Chat.GPT5_Mini,
-                    messages = {
-                        system(systemText)
-                        user(userText)
-                    },
-                    parameters = LLMConfig(
+        try {
+            val chatResponseStream = apiClient.llm().v9().chat(
+                prompt = LLMPromptID("kotlin-docs-ai"),
+                profile = OpenAIProfileIDs.Chat.GPT5_Mini,
+                messages = {
+                    system(systemText)
+                    user(userText)
+                },
+                parameters = LLMConfig(
 //                        temperature = temperature
-                    )
                 )
-                chatResponseStream.collect {
-                    val content = it.content
-                    if (content.isNotEmpty()) builder.append(content)
-                }
-            } catch (t: Throwable) {
-                println("Error: ${t.message}")
-                // Don't rethrow during tests/no client; return whatever collected
+            )
+            chatResponseStream.collect {
+                val content = it.content
+                if (content.isNotEmpty()) builder.append(content)
             }
+        } catch (t: Throwable) {
+            println("Error: ${t.message}")
+            // Don't rethrow during tests/no client; return whatever collected
         }
         return builder.toString()
     }
 
+    private suspend fun getDocsPageContent(url: String?): String = try {
+        val docsUrl = url?.takeIf { it.isNotBlank() }?.let { URI.create(it)?.path }
+            ?: throw BadRequestException("URL must be a valid Kotlin docs page")
+
+        val localPath = "${docsUrl.removeSuffix(".html").removePrefix("/")}.md"
+
+        pagesService.readTextFile(localPath) ?: throw Exception("Failed to fetch page content.")
+    } catch (_: Exception) {
+        throw BadRequestException("Failed to fetch page content.")
+    }
+
     @PostMapping("/chat")
-    fun chat(@RequestBody(required = false) body: ChatRequest?): String = processChatRequest(body)
+    fun chat(@RequestBody(required = false) body: ChatRequest?): String = runBlocking {
+        processChatRequest(body)
+    }
 
     data class SummarizeByWordsRequest(
         val url: String,
@@ -157,10 +168,8 @@ class SearchController(
     )
 
     @PostMapping("/summarize")
-    fun summary(@RequestBody(required = false) request: SummarizeRequest): String {
-        val content = runBlocking {
-            getDocsPageContent(request.url)
-        }
+    fun summary(@RequestBody(required = false) request: SummarizeRequest): String = runBlocking {
+        val content = getDocsPageContent(request.url)
 
         val summaryRequest = ChatRequest(
             // @language=markdown
@@ -177,20 +186,8 @@ class SearchController(
             userPrompt = "Provide a summary of the page."
         )
 
-        return processChatRequest(summaryRequest);
+        processChatRequest(summaryRequest)
     }
-
-    private fun getDocsPageContent(url: String?): String = try {
-        val docsUrl = url?.takeIf { it.isNotBlank() }?.let { URI.create(it)?.path }
-            ?: throw BadRequestException("URL must be a valid Kotlin docs page")
-
-        val localPath = "${docsUrl.removeSuffix(".html").removePrefix("/")}.md"
-
-        pagesService.readTextFile(localPath) ?: throw Exception("Failed to fetch page content.")
-    } catch (_: Exception) {
-        throw BadRequestException("Failed to fetch page content.")
-    }
-
 }
 
 private fun calculateTextSize(text: String): Int = text
