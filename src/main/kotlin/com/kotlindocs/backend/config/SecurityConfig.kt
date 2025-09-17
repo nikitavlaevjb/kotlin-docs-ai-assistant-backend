@@ -1,4 +1,4 @@
-package com.kotlindocs.backend.services
+package com.kotlindocs.backend.config
 
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
