@@ -9,6 +9,20 @@ server:
 
 ai-platform-token: ${AI_PLATFORM_TOKEN:}
 
+rag:
+  chunk-size: 1000
+  chunk-overlap: 200
+  max-results: 5
+  embeddings:
+    # For JetBrains AI Platform embeddings client, model is used via API Gateway client
+    base-url: ${EMBEDDINGS_BASE_URL:https://api.openai.com}
+    api-key: ${EMBEDDINGS_API_KEY:}
+    model: ${EMBEDDINGS_MODEL:sentence-transformers/multi-qa-mpnet-base-dot-v1}
+  lucene:
+    index-path: ${LUCENE_INDEX_PATH:./lucene-index}
+  # Optional: preload specific URLs on startup (comma-separated)
+  preload-urls: ${RAG_PRELOAD_URLS:}
+
 management:
   endpoints:
     web:

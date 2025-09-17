@@ -7,6 +7,7 @@ import ai.grazie.model.llm.data.stream.LLMStreamData
 import ai.grazie.model.llm.parameters.LLMConfig
 import ai.grazie.model.llm.profile.OpenAIProfileIDs
 import ai.grazie.model.llm.prompt.LLMPromptID
+import com.kotlindocs.backend.rag.RagService
 import com.kotlindocs.backend.services.PagesService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,13 +19,12 @@ import org.springframework.cache.annotation.Cacheable
 import org.springframework.http.MediaType
 import org.springframework.web.bind.annotation.*
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
-import java.net.URI
 
 @RestController
 class SearchController(
     private val apiClient: SuspendableAPIGatewayClient,
-    private val pagesService: PagesService
-
+    private val ragService: RagService,
+    private val pagesService: PagesService,
 ) {
     companion object Companion {
         val DOMAINS = listOf(
@@ -148,15 +148,10 @@ class SearchController(
         return emitter
     }
 
-    private suspend fun getDocsPageContent(url: String?): String = try {
-        val docsUrl = url?.takeIf { it.isNotBlank() }?.let { URI.create(it)?.path }
-            ?: throw BadRequestException("URL must be a valid Kotlin docs page")
-
-        val localPath = "${docsUrl.removeSuffix(".html").removePrefix("/")}.md"
-
-        pagesService.readTextFile(localPath) ?: throw Exception("Failed to fetch page content.")
+    private suspend fun getRelevantDocsContext(query: String, url: String? = null): String = try {
+        ragService.getRelevantDocsContext(query, url)
     } catch (_: Exception) {
-        throw BadRequestException("Failed to fetch page content.")
+        throw BadRequestException("Failed to retrieve relevant documentation context.")
     }
 
     @PostMapping("/chat")
@@ -182,12 +177,27 @@ class SearchController(
         val systemPrompt: String? = null,
     )
 
+    private suspend fun resolveContextFromUrlOrRag(url: String?, fallbackQuery: String): String {
+        return try {
+            if (!url.isNullOrBlank()) {
+                val path = java.net.URI.create(url).path
+                val localPath = path.removeSuffix(".html").removePrefix("/") + ".md"
+                pagesService.readTextFile(localPath)
+                    ?: throw IllegalStateException("Failed to fetch page content for $localPath")
+            } else {
+                getRelevantDocsContext(fallbackQuery, null)
+            }
+        } catch (t: Throwable) {
+            throw BadRequestException("Failed to retrieve page content: ${t.message}")
+        }
+    }
+
     private suspend fun makeSummarizeRequest(request: SummarizeRequest): ChatRequest {
-        val content = getDocsPageContent(request.url)
+        val context = resolveContextFromUrlOrRag(request.url, "summarize documentation")
 
         return ChatRequest(
             // language=markdown
-            systemPrompt = request.systemPrompt?.replace("\$content", content) ?: ("""
+            systemPrompt = request.systemPrompt?.replace("\$content", context) ?: ("""
                 You need to summarize the documentation article.
                 I will send a link to it. There are some rules you need to follow:
                   * The text shouldn't contain more than two paragraphs.
@@ -197,7 +207,7 @@ class SearchController(
                   * If the article is about the feature: provide a link (or a one-liner code block) how to activate this. 
                   * Use simplified English. Apply Kotlin documentation guidelines.
                   * All links or anchors in the answers should be in a pure Markdown markup.
-            """.trimIndent() + "\n\n```markdown\n$content\n```"),
+            """.trimIndent() + "\n\n```markdown\n$context\n```"),
             userPrompt = "Provide a summary of the page."
         )
     }
@@ -222,7 +232,7 @@ class SearchController(
         val message =
             request.message?.takeIf { it.isNotBlank() } ?: throw BadRequestException("Message must not be blank.")
 
-        val content = getDocsPageContent(request.url)
+        val context = getRelevantDocsContext(message)
 
         return ChatRequest(
             // language=markdown
@@ -239,7 +249,7 @@ class SearchController(
                  * If you want to provide a link or anchor, do it in a pure Markdown markup.
                 
                 Selected page content:
-            """.trimIndent() + "\n\n```markdown\n$content\n```",
+            """.trimIndent() + "\n\n```markdown\n$context\n```",
             userPrompt = message,
         )
     }
@@ -257,7 +267,7 @@ class SearchController(
         val message =
             request.message?.takeIf { it.isNotBlank() } ?: throw BadRequestException("Message must not be blank.")
 
-        val content = getDocsPageContent(request.url)
+        val context = resolveContextFromUrlOrRag(request.url, message)
 
         return ChatRequest(
             // language=markdown
@@ -274,7 +284,7 @@ class SearchController(
                  * Do not provide any links in the answer.
                 
                 Selected page content:
-            """.trimIndent() + "\n\n```markdown\n$content\n```",
+            """.trimIndent() + "\n\n```markdown\n$context\n```",
             userPrompt = message,
         )
     }

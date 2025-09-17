@@ -92,4 +92,17 @@ class PagesService(
             .sorted(Comparator.reverseOrder())
             .forEach { Files.deleteIfExists(it) }
     }
+
+    /**
+     * Lists all markdown files unpacked from pages.zip, returning relative paths like "docs/foo.md".
+     */
+    fun listMarkdownFiles(): List<String> {
+        val dir = tempDir ?: return emptyList()
+        val result = mutableListOf<String>()
+        Files.walk(dir).use { paths ->
+            paths.filter { Files.isRegularFile(it) && it.toString().endsWith(".md") }
+                .forEach { p -> result.add(dir.relativize(p).toString()) }
+        }
+        return result
+    }
 }
