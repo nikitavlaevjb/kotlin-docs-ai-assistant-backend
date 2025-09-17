@@ -209,7 +209,6 @@ class SearchController(
     }
 
     @PostMapping("/summarize/stream/sse", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
-    @Cacheable("summarize-sse")
     fun summarizeStreamSSE(@RequestBody(required = true) request: SummarizeRequest): SseEmitter =
         processChatSSE { makeSummarizeRequest(request) }
 
@@ -285,7 +284,7 @@ class SearchController(
     }
 
     @PostMapping("/explainInSimpleWords/stream/sse")
-    fun explainInSimpleWordsSSE(@RequestBody(required = false) request: UserMessageRequest): SseEmitter =
+    fun explainInSimpleWordsSSE(@RequestBody(required = true) request: UserMessageRequest): SseEmitter =
         processChatSSE { makeExplainInSimpleWords(request) }
 
     data class BackgroundTransformRequest(
