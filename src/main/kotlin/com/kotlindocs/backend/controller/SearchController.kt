@@ -165,7 +165,14 @@ class SearchController(
         val summaryRequest = ChatRequest(
             // @language=markdown
             systemPrompt = request.systemPrompt?.replace("\$content", content) ?: ("""
-                
+                You need to summarize the documentation article.
+                I will send a link to it. There are some rules you need to follow:
+                  * The text shouldn't contain more than two paragraphs.
+                  * It shouldn't be a short overview about all the entities mentioned in the article, but a real summary: what the article is about
+                  * If there is an important part of the article, you can provide anchor links for the particular section.
+                  * If it is a tutorial, you should explain what is the tutorial about and what is the result in the final, not summarizing the steps.
+                  * If the article about the feature: provide a link (or a one-liner code block) how to activate this.
+                  * Use simplified English. Apply Kotlin documentation guidelines.
             """.trimIndent() + "\n\n```markdown\n$content\n```"),
             userPrompt = "Provide a summary of the page."
         )
