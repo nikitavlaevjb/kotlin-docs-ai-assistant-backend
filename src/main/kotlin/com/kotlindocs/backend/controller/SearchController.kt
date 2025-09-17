@@ -234,9 +234,10 @@ class SearchController(
                   * The text shouldn't contain more than two paragraphs.
                   * It shouldn't be a short overview about all the entities mentioned in the article, but a real summary: what the article is about
                   * If there is an important part of the article, you can provide anchor links for the particular section.
-                  * If it is a tutorial, you should explain what is the tutorial about and what is the result in the final, not summarizing the steps.
-                  * If the article about the feature: provide a link (or a one-liner code block) how to activate this.
+                  * If it is a tutorial, you should explain what the tutorial is about and what is the result in the final, not summarizing the steps.
+                  * If the article is about the feature: provide a link (or a one-liner code block) how to activate this. 
                   * Use simplified English. Apply Kotlin documentation guidelines.
+                  * All links or anchors in the answers should be in a pure Markdown markup.
             """.trimIndent() + "\n\n```markdown\n$content\n```"),
             userPrompt = "Provide a summary of the page."
         )
@@ -280,10 +281,19 @@ class SearchController(
         val chatRequest = ChatRequest(
             // language=markdown
             systemPrompt = """
-                You are a Kotlin tutor.
-                Explain the topic in simple terms, step by step, using clear analogies and short examples.
+                You are a Kotlin expert and tutor.
+                You need to explain the piece of text from the official documentation that user selected. You should do this in simple terms. 
+                Follow the rules:
+                 * The text shouldn't contain more than two paragraphs.
+                 * If there is not enough information, find the sentence in the ${request.url} and try to explain in simpler words.
+                 *  If a user selected an article or a word that is not a term, the answer should explain lack of context. Kindly ask to extend the selection or make an another selection.
+                 * Use simplified English. Apply Kotlin documentation guidelines.
+                 * If it is possible to provide a small example, provide it. It should be concise and straight to the point.
+                 * Use only simple terms, like the user has no strong knowledge of programming.
+                 * Do not provide any links in the answer.
                 
-                Original page content:
+                Selected page content:
+
             """.trimIndent() + "\n\n```markdown\n$content\n```",
             userPrompt = message,
         )
