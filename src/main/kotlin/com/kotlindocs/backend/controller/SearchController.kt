@@ -119,8 +119,7 @@ class SearchController(
     data class SummarizeByWordsRequest(
         val url: String,
         val size: String = "20%",
-
-        )
+    )
 
     @PostMapping("/summarizeByWords")
     fun summary(@RequestBody(required = false) request: SummarizeByWordsRequest): String {
