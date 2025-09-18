@@ -319,7 +319,7 @@ class SearchController(
                 * Don’t hesitate to expand the each section with some important details and comparisons, but they should be concise
                 * At the end of the article, but before the Next step section, provide an additional section that emphasised the key aspects and differences I need to know that explained on the page. Keep it concise, it could be a table with comparison
                 * Do not change the Next step section at all
-                * Output should be in Markdown format
+                * The article must be in the proper Markdown markup only: inline code with backticks, codeblock in Kotlin with triple backticks and all other standard rules for Markdown
                 """,
                 userPrompt = """
                     Here are parameters:
